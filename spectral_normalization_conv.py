@@ -32,6 +32,61 @@ from tensorflow.python.ops import variables as tf_variables
 from tensorflow.python.keras.layers.convolutional import Conv
 
 class SNConv(Conv):
+    """Abstract N-D convolution layer with spectral normalization
+        (private, used as implementation base).
+
+    This layer creates a convolution kernel that is convolved
+    (actually cross-correlated) with the layer input to produce a tensor of
+    outputs. If `use_bias` is True (and a `bias_initializer` is provided),
+    a bias vector is created and added to the outputs. Finally, if
+    `activation` is not `None`, it is applied to the outputs as well.
+
+    Arguments:
+    rank: An integer, the rank of the convolution, e.g. "2" for 2D convolution.
+    filters: Integer, the dimensionality of the output space (i.e. the number
+      of filters in the convolution).
+    kernel_size: An integer or tuple/list of n integers, specifying the
+      length of the convolution window.
+    strides: An integer or tuple/list of n integers,
+      specifying the stride length of the convolution.
+      Specifying any stride value != 1 is incompatible with specifying
+      any `dilation_rate` value != 1.
+    padding: One of `"valid"`,  `"same"`, or `"causal"` (case-insensitive).
+    data_format: A string, one of `channels_last` (default) or `channels_first`.
+      The ordering of the dimensions in the inputs.
+      `channels_last` corresponds to inputs with shape
+      `(batch, ..., channels)` while `channels_first` corresponds to
+      inputs with shape `(batch, channels, ...)`.
+    dilation_rate: An integer or tuple/list of n integers, specifying
+      the dilation rate to use for dilated convolution.
+      Currently, specifying any `dilation_rate` value != 1 is
+      incompatible with specifying any `strides` value != 1.
+    activation: Activation function. Set it to None to maintain a
+      linear activation.
+    use_bias: Boolean, whether the layer uses a bias.
+    kernel_initializer: An initializer for the convolution kernel.
+    bias_initializer: An initializer for the bias vector. If None, the default
+      initializer will be used.
+    kernel_regularizer: Optional regularizer for the convolution kernel.
+    bias_regularizer: Optional regularizer for the bias vector.
+    activity_regularizer: Optional regularizer function for the output.
+    kernel_constraint: Optional projection function to be applied to the
+        kernel after being updated by an `Optimizer` (e.g. used to implement
+        norm constraints or value constraints for layer weights). The function
+        must take as input the unprojected variable and must return the
+        projected variable (which must have the same shape). Constraints are
+        not safe to use when doing asynchronous distributed training.
+    bias_constraint: Optional projection function to be applied to the
+        bias after being updated by an `Optimizer`.
+    singular_vector_initializer: Initializer for
+        the singular vector used in spectral normalization.
+    power_iter: Positive integer,
+        number of iteration in singular value estimation.
+    trainable: Boolean, if `True` the weights of this layer will be marked as
+      trainable (and listed in `layer.trainable_weights`).
+    name: A string, the name of the layer.
+    """
+
     def __init__(self, rank,
                  filters,
                  kernel_size,
@@ -187,6 +242,68 @@ class SNConv(Conv):
 
 
 class SNConv1D(SNConv):
+    """1D convolution layer with spectral normalization
+        (e.g. temporal convolution).
+
+    This layer creates a convolution kernel that is convolved
+    with the layer input over a single spatial (or temporal) dimension
+    to produce a tensor of outputs.
+    If `use_bias` is True, a bias vector is created and added to the outputs.
+    Finally, if `activation` is not `None`,
+    it is applied to the outputs as well.
+
+    When using this layer as the first layer in a model,
+    provide an `input_shape` argument
+    (tuple of integers or `None`, e.g.
+    `(10, 128)` for sequences of 10 vectors of 128-dimensional vectors,
+    or `(None, 128)` for variable-length sequences of 128-dimensional vectors.
+
+    Arguments:
+    filters: Integer, the dimensionality of the output space
+      (i.e. the number of output filters in the convolution).
+    kernel_size: An integer or tuple/list of a single integer,
+      specifying the length of the 1D convolution window.
+    strides: An integer or tuple/list of a single integer,
+      specifying the stride length of the convolution.
+      Specifying any stride value != 1 is incompatible with specifying
+      any `dilation_rate` value != 1.
+    padding: One of `"valid"`, `"causal"` or `"same"` (case-insensitive).
+      `"causal"` results in causal (dilated) convolutions, e.g. output[t]
+      does not depend on input[t+1:]. Useful when modeling temporal data
+      where the model should not violate the temporal order.
+      See [WaveNet: A Generative Model for Raw Audio, section
+        2.1](https://arxiv.org/abs/1609.03499).
+    data_format: A string,
+      one of `channels_last` (default) or `channels_first`.
+    dilation_rate: an integer or tuple/list of a single integer, specifying
+      the dilation rate to use for dilated convolution.
+      Currently, specifying any `dilation_rate` value != 1 is
+      incompatible with specifying any `strides` value != 1.
+    activation: Activation function to use.
+      If you don't specify anything, no activation is applied
+      (ie. "linear" activation: `a(x) = x`).
+    use_bias: Boolean, whether the layer uses a bias vector.
+    kernel_initializer: Initializer for the `kernel` weights matrix.
+    bias_initializer: Initializer for the bias vector.
+    kernel_regularizer: Regularizer function applied to
+      the `kernel` weights matrix.
+    bias_regularizer: Regularizer function applied to the bias vector.
+    activity_regularizer: Regularizer function applied to
+      the output of the layer (its "activation")..
+    kernel_constraint: Constraint function applied to the kernel matrix.
+    bias_constraint: Constraint function applied to the bias vector.
+    singular_vector_initializer: Initializer for
+        the singular vector used in spectral normalization.
+    power_iter: Positive integer,
+        number of iteration in singular value estimation.
+
+    Input shape:
+    3D tensor with shape: `(batch_size, steps, input_dim)`
+
+    Output shape:
+    3D tensor with shape: `(batch_size, new_steps, filters)`
+      `steps` value might have changed due to padding or strides.
+    """
 
     def __init__(self,
                filters,
@@ -235,6 +352,82 @@ class SNConv1D(SNConv):
 
 
 class SNConv2D(SNConv):
+    """2D convolution layer with spectral normalization
+        (e.g. spatial convolution over images).
+
+    This layer creates a convolution kernel that is convolved
+    with the layer input to produce a tensor of
+    outputs. If `use_bias` is True,
+    a bias vector is created and added to the outputs. Finally, if
+    `activation` is not `None`, it is applied to the outputs as well.
+
+    When using this layer as the first layer in a model,
+    provide the keyword argument `input_shape`
+    (tuple of integers, does not include the sample axis),
+    e.g. `input_shape=(128, 128, 3)` for 128x128 RGB pictures
+    in `data_format="channels_last"`.
+
+    Arguments:
+    filters: Integer, the dimensionality of the output space
+      (i.e. the number of output filters in the convolution).
+    kernel_size: An integer or tuple/list of 2 integers, specifying the
+      height and width of the 2D convolution window.
+      Can be a single integer to specify the same value for
+      all spatial dimensions.
+    strides: An integer or tuple/list of 2 integers,
+      specifying the strides of the convolution along the height and width.
+      Can be a single integer to specify the same value for
+      all spatial dimensions.
+      Specifying any stride value != 1 is incompatible with specifying
+      any `dilation_rate` value != 1.
+    padding: one of `"valid"` or `"same"` (case-insensitive).
+    data_format: A string,
+      one of `channels_last` (default) or `channels_first`.
+      The ordering of the dimensions in the inputs.
+      `channels_last` corresponds to inputs with shape
+      `(batch, height, width, channels)` while `channels_first`
+      corresponds to inputs with shape
+      `(batch, channels, height, width)`.
+      It defaults to the `image_data_format` value found in your
+      Keras config file at `~/.keras/keras.json`.
+      If you never set it, then it will be "channels_last".
+    dilation_rate: an integer or tuple/list of 2 integers, specifying
+      the dilation rate to use for dilated convolution.
+      Can be a single integer to specify the same value for
+      all spatial dimensions.
+      Currently, specifying any `dilation_rate` value != 1 is
+      incompatible with specifying any stride value != 1.
+    activation: Activation function to use.
+      If you don't specify anything, no activation is applied
+      (ie. "linear" activation: `a(x) = x`).
+    use_bias: Boolean, whether the layer uses a bias vector.
+    kernel_initializer: Initializer for the `kernel` weights matrix.
+    bias_initializer: Initializer for the bias vector.
+    kernel_regularizer: Regularizer function applied to
+      the `kernel` weights matrix.
+    bias_regularizer: Regularizer function applied to the bias vector.
+    activity_regularizer: Regularizer function applied to
+      the output of the layer (its "activation")..
+    kernel_constraint: Constraint function applied to the kernel matrix.
+    bias_constraint: Constraint function applied to the bias vector.
+    singular_vector_initializer: Initializer for
+        the singular vector used in spectral normalization.
+    power_iter: Positive integer,
+        number of iteration in singular value estimation.
+
+    Input shape:
+    4D tensor with shape:
+    `(samples, channels, rows, cols)` if data_format='channels_first'
+    or 4D tensor with shape:
+    `(samples, rows, cols, channels)` if data_format='channels_last'.
+
+    Output shape:
+    4D tensor with shape:
+    `(samples, filters, new_rows, new_cols)` if data_format='channels_first'
+    or 4D tensor with shape:
+    `(samples, new_rows, new_cols, filters)` if data_format='channels_last'.
+    `rows` and `cols` values might have changed due to padding.
+    """
 
     def __init__(self,
                  filters,
@@ -278,6 +471,90 @@ class SNConv2D(SNConv):
 
 
 class SNConv3D(SNConv):
+    """3D convolution layer with spectral Normalization
+        (e.g. spatial convolution over volumes).
+
+    This layer creates a convolution kernel that is convolved
+    with the layer input to produce a tensor of
+    outputs. If `use_bias` is True,
+    a bias vector is created and added to the outputs. Finally, if
+    `activation` is not `None`, it is applied to the outputs as well.
+
+    When using this layer as the first layer in a model,
+    provide the keyword argument `input_shape`
+    (tuple of integers, does not include the sample axis),
+    e.g. `input_shape=(128, 128, 128, 1)` for 128x128x128 volumes
+    with a single channel,
+    in `data_format="channels_last"`.
+
+    Arguments:
+    filters: Integer, the dimensionality of the output space
+      (i.e. the number of output filters in the convolution).
+    kernel_size: An integer or tuple/list of 3 integers, specifying the
+      depth, height and width of the 3D convolution window.
+      Can be a single integer to specify the same value for
+      all spatial dimensions.
+    strides: An integer or tuple/list of 3 integers,
+      specifying the strides of the convolution along each spatial
+        dimension.
+      Can be a single integer to specify the same value for
+      all spatial dimensions.
+      Specifying any stride value != 1 is incompatible with specifying
+      any `dilation_rate` value != 1.
+    padding: one of `"valid"` or `"same"` (case-insensitive).
+    data_format: A string,
+      one of `channels_last` (default) or `channels_first`.
+      The ordering of the dimensions in the inputs.
+      `channels_last` corresponds to inputs with shape
+      `(batch, spatial_dim1, spatial_dim2, spatial_dim3, channels)`
+      while `channels_first` corresponds to inputs with shape
+      `(batch, channels, spatial_dim1, spatial_dim2, spatial_dim3)`.
+      It defaults to the `image_data_format` value found in your
+      Keras config file at `~/.keras/keras.json`.
+      If you never set it, then it will be "channels_last".
+    dilation_rate: an integer or tuple/list of 3 integers, specifying
+      the dilation rate to use for dilated convolution.
+      Can be a single integer to specify the same value for
+      all spatial dimensions.
+      Currently, specifying any `dilation_rate` value != 1 is
+      incompatible with specifying any stride value != 1.
+    activation: Activation function to use.
+      If you don't specify anything, no activation is applied
+      (ie. "linear" activation: `a(x) = x`).
+    use_bias: Boolean, whether the layer uses a bias vector.
+    kernel_initializer: Initializer for the `kernel` weights matrix.
+    bias_initializer: Initializer for the bias vector.
+    kernel_regularizer: Regularizer function applied to
+      the `kernel` weights matrix.
+    bias_regularizer: Regularizer function applied to the bias vector.
+    activity_regularizer: Regularizer function applied to
+      the output of the layer (its "activation")..
+    kernel_constraint: Constraint function applied to the kernel matrix.
+    bias_constraint: Constraint function applied to the bias vector.
+    singular_vector_initializer: Initializer for
+        the singular vector used in spectral normalization.
+    power_iter: Positive integer,
+        number of iteration in singular value estimation.
+
+    Input shape:
+    5D tensor with shape:
+    `(samples, channels, conv_dim1, conv_dim2, conv_dim3)` if
+      data_format='channels_first'
+    or 5D tensor with shape:
+    `(samples, conv_dim1, conv_dim2, conv_dim3, channels)` if
+      data_format='channels_last'.
+
+    Output shape:
+    5D tensor with shape:
+    `(samples, filters, new_conv_dim1, new_conv_dim2, new_conv_dim3)` if
+      data_format='channels_first'
+    or 5D tensor with shape:
+    `(samples, new_conv_dim1, new_conv_dim2, new_conv_dim3, filters)` if
+      data_format='channels_last'.
+    `new_conv_dim1`, `new_conv_dim2` and `new_conv_dim3` values might have
+      changed due to padding.
+    """
+
     def __init__(self,
                filters,
                kernel_size,
