@@ -22,5 +22,5 @@ from SpectralNormalization.layers import SNConv2D
 outputs = SNConv2D(64, (3, 3), padding='same')(inputs)
 ```
 
-You can set `singular_vector_initializer` and `power_iter`, which affect singular value estimation in spectral normalization.
+You can set `singular_vector_initializer` and `power_iter` arguments, which affect singular value estimation in spectral normalization.
 And also, you can use the same arguments as original keras layers.
