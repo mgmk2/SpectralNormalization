@@ -19,13 +19,11 @@ from tensorflow.python.keras import regularizers
 
 from tensorflow.python.keras.engine import base_layer_utils
 from tensorflow.python.keras.engine.input_spec import InputSpec
-from tensorflow.python.keras.utils import conv_utils
 from tensorflow.python.keras.utils import tf_utils
 
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_array_ops
 from tensorflow.python.ops import nn
-from tensorflow.python.ops import nn_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn_impl
 from tensorflow.python.ops import state_ops
@@ -55,6 +53,7 @@ class SNConv(Conv):
                  trainable=True,
                  name=None,
                  **kwargs):
+
         super(SNConv, self).__init__(
             rank=rank,
             filters=filters,
@@ -117,23 +116,25 @@ class SNConv(Conv):
     def call(self, inputs, training=None):
         training = self._get_training_value(training)
 
-        # update singular vector by power iteration
+        # Update singular vector by power iteration
         if self.data_format == 'channels_first':
             W_T = array_ops.reshape(self.kernel, (self.filters, -1))
             W = array_ops.transpose(W_T)
         else:
             W = array_ops.reshape(self.kernel, (-1, self.filters))
             W_T = array_ops.transpose(W)
-        u = array_ops.identity(self.u)
+        u = self.u
         for i in range(self.power_iter):
             v = nn_impl.l2_normalize(math_ops.matmul(u, W))  # 1 x filters
             u = nn_impl.l2_normalize(math_ops.matmul(v, W_T))
+        # Backprop doesn't need in power iteration
         u_bar = gen_array_ops.stop_gradient(u)
         v_bar = gen_array_ops.stop_gradient(v)
+        # Spectral Normalization
         sigma_W = math_ops.matmul(math_ops.matmul(u_bar, W), array_ops.transpose(v_bar))
         W_bar = self.kernel / array_ops.squeeze(sigma_W)
 
-        # assign new singular vector
+        # Assign new singular vector
         training_value = tf_utils.constant_value(training)
         if training_value is not False:
             if distribution_strategy_context.in_cross_replica_context():
