@@ -12,8 +12,8 @@ TensorFlow keras layers class with spectral normalization:
 * SNConv3D
 
 # Requirement
-tensorflow >= 1.14
-numpy (only used in test code)
+* tensorflow >= 1.14
+* numpy (only used in test code)
 
 # Usage
 Replace keras layers (Conv2D etc) with spectral normalization layers as below:
