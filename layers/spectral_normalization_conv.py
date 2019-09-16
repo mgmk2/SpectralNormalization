@@ -199,7 +199,7 @@ class SNConv(Conv):
                     def true_branch():
                         return strategy.extended.update(
                             self.u,
-                            self._assign_in_strategy, (u_bar,),
+                            self._assign_singular_vector, (u_bar,),
                             group=False)
                     def false_branch():
                         return strategy.unwrap(self.u)
