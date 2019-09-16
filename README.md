@@ -2,7 +2,7 @@
 Implementation of Spectral Normalization for TensorFlow keras API.
 This layers are available on Distribute Strategy (ex. TPU).
 
-This is a modification of TensorFlow keras layers and code is derived from [TensorFlow ver1.14](https://github.com/tensorflow/tensorflow/tree/r1.14/tensorflow) (under Apache License 2.0).
+This is a modification of TensorFlow keras layers and code is derived from [TensorFlow ver1.14](https://github.com/tensorflow/tensorflow/tree/r1.14/tensorflow) (under [Apache License 2.0](https://github.com/mgmk2/SpectralNormalization/blob/master/LICENSE)).
 
 # Features
 TensorFlow keras layers class with spectral normalization:
@@ -41,4 +41,4 @@ $python test.py --use_tpu
 ```
 
 # License
-Apache License 2.0
+[Apache License 2.0](https://github.com/mgmk2/SpectralNormalization/blob/master/LICENSE)
