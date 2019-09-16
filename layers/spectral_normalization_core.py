@@ -5,6 +5,8 @@
 
 from tensorflow.python.distribute import distribution_strategy_context
 
+from tensorflow.python.framework import common_shapes
+from tensorflow.python.framework import dtypes
 from tensorflow.python.framework import ops
 from tensorflow.python.framework import tensor_shape
 
@@ -20,8 +22,9 @@ from tensorflow.python.keras.utils import tf_utils
 
 from tensorflow.python.ops import array_ops
 from tensorflow.python.ops import gen_array_ops
-from tensorflow.python.ops import nn
+from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import math_ops
+from tensorflow.python.ops import nn
 from tensorflow.python.ops import nn_impl
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variables as tf_variables
