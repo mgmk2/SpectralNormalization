@@ -233,11 +233,7 @@ class SNDense(Dense):
                 output_shape = shape[:-1] + [self.units]
                 outputs.set_shape(output_shape)
         else:
-            # Cast the inputs to self.dtype, which is the variable dtype. We do not
-            # cast if `should_cast_variables` is True, as in that case the variable
-            # will be automatically casted to inputs.dtype.
-            if not self._mixed_precision_policy.should_cast_variables:
-                inputs = math_ops.cast(inputs, self.dtype)
+            inputs = math_ops.cast(inputs, self._compute_dtype)
             outputs = gen_math_ops.mat_mul(inputs, W_bar)
         if self.use_bias:
             outputs = nn.bias_add(outputs, self.bias)
