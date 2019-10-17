@@ -127,12 +127,29 @@ class SNConv(Conv):
             activity_regularizer=regularizers.get(activity_regularizer),
             kernel_constraint=constraints.get(kernel_constraint),
             bias_constraint=constraints.get(bias_constraint),
-            trainable=trainable,
             name=name,
             **kwargs)
         self.use_sn = use_sn
         self.singular_vector_initializer = singular_vector_initializer
         self.power_iter = power_iter
+        self._trainable_var = None
+        self.trainable = trainable
+
+    @property
+    def trainable(self):
+        return self._trainable
+
+    @trainable.setter
+    def trainable(self, value):
+        self._trainable = value
+        if self._trainable_var is not None:
+            self._trainable_var.update_value(value)
+
+    def _get_trainable_var(self):
+        if self._trainable_var is None:
+            self._trainable_var = K.freezable_variable(
+                self._trainable, name=self.name + '_trainable')
+        return self._trainable_var
 
     def build(self, input_shape):
         if self.use_sn:
