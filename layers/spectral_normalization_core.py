@@ -104,6 +104,7 @@ class SNDense(Dense):
                  bias_constraint=None,
                  power_iter=1,
                  use_sn=True,
+                 trainable=True,
                  **kwargs):
 
         super(SNDense, self).__init__(
