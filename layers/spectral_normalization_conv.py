@@ -105,6 +105,7 @@ class SNConv(Conv):
                  kernel_constraint=None,
                  bias_constraint=None,
                  power_iter=1,
+                 use_sn=True,
                  trainable=True,
                  name=None,
                  **kwargs):
@@ -129,29 +130,31 @@ class SNConv(Conv):
             trainable=trainable,
             name=name,
             **kwargs)
+        self.use_sn = use_sn
         self.singular_vector_initializer = singular_vector_initializer
         self.power_iter = power_iter
 
     def build(self, input_shape):
-        input_shape = tensor_shape.TensorShape(input_shape)
-        if self.data_format == 'channels_first':
-            channel_axis = 1
-        else:
-            channel_axis = -1
-        if input_shape.dims[channel_axis].value is None:
-            raise ValueError('The channel dimension of the inputs '
-                             'should be defined. Found `None`.')
-        input_dim = int(input_shape[channel_axis])
-        kernel_shape = self.kernel_size + (input_dim, self.filters)
-        singular_vector_shape = (1, reduce(mul, self.kernel_size) * input_dim)
+        if self.use_sn:
+            input_shape = tensor_shape.TensorShape(input_shape)
+            if self.data_format == 'channels_first':
+                channel_axis = 1
+            else:
+                channel_axis = -1
+            if input_shape.dims[channel_axis].value is None:
+                raise ValueError('The channel dimension of the inputs '
+                                 'should be defined. Found `None`.')
+            input_dim = int(input_shape[channel_axis])
+            kernel_shape = self.kernel_size + (input_dim, self.filters)
+            singular_vector_shape = (1, reduce(mul, self.kernel_size) * input_dim)
 
-        self.u = self.add_weight(
-            name='singular_vector',
-            shape=singular_vector_shape,
-            initializer=self.singular_vector_initializer,
-            trainable=False,
-            aggregation=tf_variables.VariableAggregation.ONLY_FIRST_REPLICA,
-            dtype=self.dtype)
+            self.u = self.add_weight(
+                name='singular_vector',
+                shape=singular_vector_shape,
+                initializer=self.singular_vector_initializer,
+                trainable=False,
+                aggregation=tf_variables.VariableAggregation.ONLY_FIRST_REPLICA,
+                dtype=self.dtype)
         super(SNConv, self).build(input_shape)
 
     def _get_training_value(self, training=None):
@@ -169,52 +172,56 @@ class SNConv(Conv):
                 return state_ops.assign(variable, value, name=scope)
 
     def call(self, inputs, training=None):
-        training = self._get_training_value(training)
 
-        # Update singular vector by power iteration
-        if self.data_format == 'channels_first':
-            W_T = array_ops.reshape(self.kernel, (self.filters, -1))
-            W = array_ops.transpose(W_T)
-        else:
-            W = array_ops.reshape(self.kernel, (-1, self.filters))
-            W_T = array_ops.transpose(W)
-        u = self.u
-        for i in range(self.power_iter):
-            v = nn_impl.l2_normalize(math_ops.matmul(u, W))  # 1 x filters
-            u = nn_impl.l2_normalize(math_ops.matmul(v, W_T))
-        # Backprop doesn't need in power iteration
-        u_bar = gen_array_ops.stop_gradient(u)
-        v_bar = gen_array_ops.stop_gradient(v)
-        # Spectral Normalization
-        sigma_W = math_ops.matmul(math_ops.matmul(u_bar, W), array_ops.transpose(v_bar))
-        W_bar = self.kernel / array_ops.squeeze(sigma_W)
+        if self.use_sn:
+            training = self._get_training_value(training)
 
-        # Assign new singular vector
-        training_value = tf_utils.constant_value(training)
-        if training_value is not False:
-            if distribution_strategy_context.in_cross_replica_context():
-                strategy = distribution_strategy_context.get_strategy()
-
-                def u_update():
-                    def true_branch():
-                        return strategy.extended.update(
-                            self.u,
-                            self._assign_singular_vector, (u_bar,),
-                            group=False)
-                    def false_branch():
-                        return strategy.unwrap(self.u)
-                    return tf_utils.smart_cond(training, true_branch, false_branch)
+            # Update singular vector by power iteration
+            if self.data_format == 'channels_first':
+                W_T = array_ops.reshape(self.kernel, (self.filters, -1))
+                W = array_ops.transpose(W_T)
             else:
-                def u_update():
-                    def true_branch():
-                        return self._assign_singular_vector(self.u, u_bar)
-                    def false_branch():
-                        return self.u
-                    return tf_utils.smart_cond(training, true_branch, false_branch)
-            self.add_update(u_update, inputs=True)
+                W = array_ops.reshape(self.kernel, (-1, self.filters))
+                W_T = array_ops.transpose(W)
+            u = self.u
+            for i in range(self.power_iter):
+                v = nn_impl.l2_normalize(math_ops.matmul(u, W))  # 1 x filters
+                u = nn_impl.l2_normalize(math_ops.matmul(v, W_T))
+            # Backprop doesn't need in power iteration
+            u_bar = gen_array_ops.stop_gradient(u)
+            v_bar = gen_array_ops.stop_gradient(v)
+            # Spectral Normalization
+            sigma_W = math_ops.matmul(math_ops.matmul(u_bar, W), array_ops.transpose(v_bar))
+            W_bar = self.kernel / array_ops.squeeze(sigma_W)
 
-        # normal convolution using W_bar
-        outputs = self._convolution_op(inputs, W_bar)
+            # Assign new singular vector
+            training_value = tf_utils.constant_value(training)
+            if training_value is not False:
+                if distribution_strategy_context.in_cross_replica_context():
+                    strategy = distribution_strategy_context.get_strategy()
+
+                    def u_update():
+                        def true_branch():
+                            return strategy.extended.update(
+                                self.u,
+                                self._assign_singular_vector, (u_bar,),
+                                group=False)
+                        def false_branch():
+                            return strategy.unwrap(self.u)
+                        return tf_utils.smart_cond(training, true_branch, false_branch)
+                else:
+                    def u_update():
+                        def true_branch():
+                            return self._assign_singular_vector(self.u, u_bar)
+                        def false_branch():
+                            return self.u
+                        return tf_utils.smart_cond(training, true_branch, false_branch)
+                self.add_update(u_update, inputs=True)
+
+            # normal convolution using W_bar
+            outputs = self._convolution_op(inputs, W_bar)
+        else:
+            outputs = self._convolution_op(inputs, self.kernel)
 
         if self.use_bias:
           if self.data_format == 'channels_first':
@@ -323,6 +330,7 @@ class SNConv1D(SNConv):
                kernel_constraint=None,
                bias_constraint=None,
                power_iter=1,
+               use_sn=True,
                **kwargs):
         super(SNConv1D, self).__init__(
             rank=1,
@@ -343,6 +351,7 @@ class SNConv1D(SNConv):
             kernel_constraint=constraints.get(kernel_constraint),
             bias_constraint=constraints.get(bias_constraint),
             power_iter=power_iter,
+            use_sn=use_sn,
             **kwargs)
 
     def call(self, inputs):
@@ -447,6 +456,7 @@ class SNConv2D(SNConv):
                  kernel_constraint=None,
                  bias_constraint=None,
                  power_iter=1,
+                 use_sn=True,
                  **kwargs):
         super(SNConv2D, self).__init__(
             rank=2,
@@ -467,6 +477,7 @@ class SNConv2D(SNConv):
             kernel_constraint=constraints.get(kernel_constraint),
             bias_constraint=constraints.get(bias_constraint),
             power_iter=power_iter,
+            use_sn=use_sn,
             **kwargs)
 
 
@@ -573,6 +584,7 @@ class SNConv3D(SNConv):
                kernel_constraint=None,
                bias_constraint=None,
                power_iter=1,
+               use_sn=True,
                **kwargs):
         super(SNConv3D, self).__init__(
             rank=3,
@@ -593,4 +605,5 @@ class SNConv3D(SNConv):
             kernel_constraint=constraints.get(kernel_constraint),
             bias_constraint=constraints.get(bias_constraint),
             power_iter=power_iter,
+            use_sn=use_sn,
             **kwargs)

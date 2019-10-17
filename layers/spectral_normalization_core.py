@@ -103,6 +103,7 @@ class SNDense(Dense):
                  kernel_constraint=None,
                  bias_constraint=None,
                  power_iter=1,
+                 use_sn=True,
                  **kwargs):
 
         super(SNDense, self).__init__(
@@ -117,27 +118,29 @@ class SNDense(Dense):
             kernel_constraint=constraints.get(kernel_constraint),
             bias_constraint=constraints.get(bias_constraint),
             **kwargs)
+        self.use_sn = use_sn
         self.singular_vector_initializer = singular_vector_initializer
         self.power_iter = power_iter
 
     def build(self, input_shape):
-        dtype = dtypes.as_dtype(self.dtype or K.floatx())
-        if not (dtype.is_floating or dtype.is_complex):
-            raise TypeError('Unable to build `Dense` layer with non-floating point '
-                            'dtype %s' % (dtype,))
-        input_shape = tensor_shape.TensorShape(input_shape)
-        if tensor_shape.dimension_value(input_shape[-1]) is None:
-            raise ValueError('The last dimension of the inputs to `Dense` '
-                             'should be defined. Found `None`.')
-        last_dim = tensor_shape.dimension_value(input_shape[-1])
+        if self.use_sn:
+            dtype = dtypes.as_dtype(self.dtype or K.floatx())
+            if not (dtype.is_floating or dtype.is_complex):
+                raise TypeError('Unable to build `Dense` layer with non-floating point '
+                                'dtype %s' % (dtype,))
+            input_shape = tensor_shape.TensorShape(input_shape)
+            if tensor_shape.dimension_value(input_shape[-1]) is None:
+                raise ValueError('The last dimension of the inputs to `Dense` '
+                                 'should be defined. Found `None`.')
+            last_dim = tensor_shape.dimension_value(input_shape[-1])
 
-        self.u = self.add_weight(
-            name='singular_vector',
-            shape=(1, last_dim),
-            initializer=self.singular_vector_initializer,
-            trainable=False,
-            aggregation=tf_variables.VariableAggregation.ONLY_FIRST_REPLICA,
-            dtype=self.dtype)
+            self.u = self.add_weight(
+                name='singular_vector',
+                shape=(1, last_dim),
+                initializer=self.singular_vector_initializer,
+                trainable=False,
+                aggregation=tf_variables.VariableAggregation.ONLY_FIRST_REPLICA,
+                dtype=self.dtype)
         super(SNDense, self).build(input_shape)
 
     def _get_training_value(self, training=None):
@@ -155,45 +158,49 @@ class SNDense(Dense):
                 return state_ops.assign(variable, value, name=scope)
 
     def call(self, inputs, training=None):
-        training = self._get_training_value(training)
 
-        # Update singular vector by power iteration
-        W = self.kernel
-        W_T = array_ops.transpose(W)
-        u = self.u
-        for i in range(self.power_iter):
-            v = nn_impl.l2_normalize(math_ops.matmul(u, W))  # 1 x filters
-            u = nn_impl.l2_normalize(math_ops.matmul(v, W_T))
-        # Backprop doesn't need in power iteration
-        u_bar = gen_array_ops.stop_gradient(u)
-        v_bar = gen_array_ops.stop_gradient(v)
-        # Spectral Normalization
-        sigma_W = math_ops.matmul(math_ops.matmul(u_bar, W), array_ops.transpose(v_bar))
-        W_bar = self.kernel / array_ops.squeeze(sigma_W)
+        if self.use_sn:
+            training = self._get_training_value(training)
 
-        # Assign new singular vector
-        training_value = tf_utils.constant_value(training)
-        if training_value is not False:
-            if distribution_strategy_context.in_cross_replica_context():
-                strategy = distribution_strategy_context.get_strategy()
+            # Update singular vector by power iteration
+            W = self.kernel
+            W_T = array_ops.transpose(W)
+            u = self.u
+            for i in range(self.power_iter):
+                v = nn_impl.l2_normalize(math_ops.matmul(u, W))  # 1 x filters
+                u = nn_impl.l2_normalize(math_ops.matmul(v, W_T))
+            # Backprop doesn't need in power iteration
+            u_bar = gen_array_ops.stop_gradient(u)
+            v_bar = gen_array_ops.stop_gradient(v)
+            # Spectral Normalization
+            sigma_W = math_ops.matmul(math_ops.matmul(u_bar, W), array_ops.transpose(v_bar))
+            W_bar = self.kernel / array_ops.squeeze(sigma_W)
 
-                def u_update():
-                    def true_branch():
-                        return strategy.extended.update(
-                            self.u,
-                            self._assign_singular_vector, (u_bar,),
-                            group=False)
-                    def false_branch():
-                        return strategy.unwrap(self.u)
-                    return tf_utils.smart_cond(training, true_branch, false_branch)
-            else:
-                def u_update():
-                    def true_branch():
-                        return self._assign_singular_vector(self.u, u_bar)
-                    def false_branch():
-                        return self.u
-                    return tf_utils.smart_cond(training, true_branch, false_branch)
-            self.add_update(u_update, inputs=True)
+            # Assign new singular vector
+            training_value = tf_utils.constant_value(training)
+            if training_value is not False:
+                if distribution_strategy_context.in_cross_replica_context():
+                    strategy = distribution_strategy_context.get_strategy()
+
+                    def u_update():
+                        def true_branch():
+                            return strategy.extended.update(
+                                self.u,
+                                self._assign_singular_vector, (u_bar,),
+                                group=False)
+                        def false_branch():
+                            return strategy.unwrap(self.u)
+                        return tf_utils.smart_cond(training, true_branch, false_branch)
+                else:
+                    def u_update():
+                        def true_branch():
+                            return self._assign_singular_vector(self.u, u_bar)
+                        def false_branch():
+                            return self.u
+                        return tf_utils.smart_cond(training, true_branch, false_branch)
+                self.add_update(u_update, inputs=True)
+        else:
+            W_bar = self.kernel
 
         # normal Dense using W_bar
         inputs = ops.convert_to_tensor(inputs)
