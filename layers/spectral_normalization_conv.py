@@ -214,7 +214,7 @@ class SNConv(Conv):
             self.add_update(u_update, inputs=True)
 
         # normal convolution using W_bar
-        outputs = self._convolution_op(inputs, self.kernel)
+        outputs = self._convolution_op(inputs, W_bar)
 
         if self.use_bias:
           if self.data_format == 'channels_first':
