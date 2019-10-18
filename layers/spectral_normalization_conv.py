@@ -177,6 +177,8 @@ class SNConv(Conv):
     def _get_training_value(self, training=None):
         if training is None:
             training = K.learning_phase()
+        if isinstance(training, int):
+            training = bool(training)
         if base_layer_utils.is_in_keras_graph():
             training = math_ops.logical_and(training, self._get_trainable_var())
         else:
