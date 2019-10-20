@@ -3,6 +3,11 @@
 # and
 # https://github.com/tensorflow/tensorflow/blob/r1.14/tensorflow/python/keras/layers/normalization.py
 
+import numpy as np
+
+from functools import reduce
+from operator import mul
+
 from tensorflow.python.distribute import distribution_strategy_context
 
 from tensorflow.python.framework import common_shapes
@@ -21,13 +26,12 @@ from tensorflow.python.keras.engine.input_spec import InputSpec
 from tensorflow.python.keras.utils import tf_utils
 
 from tensorflow.python.ops import array_ops
-from tensorflow.python.ops import gen_array_ops
-from tensorflow.python.ops import gen_math_ops
 from tensorflow.python.ops import math_ops
 from tensorflow.python.ops import nn
 from tensorflow.python.ops import nn_impl
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variables as tf_variables
+from tensorflow.python.ops.custom_gradient import custom_gradient
 
 from tensorflow.python.keras.layers.core import Dense
 
@@ -94,6 +98,8 @@ class SNDense(Dense):
                  units,
                  activation=None,
                  use_bias=True,
+                 use_wscale=False,
+                 lr_mul=1.0,
                  kernel_initializer='glorot_uniform',
                  bias_initializer='zeros',
                  singular_vector_initializer=initializers.RandomNormal(0, 1),
@@ -119,6 +125,8 @@ class SNDense(Dense):
             kernel_constraint=constraints.get(kernel_constraint),
             bias_constraint=constraints.get(bias_constraint),
             **kwargs)
+        self.use_wscale = use_wscale
+        self.lr_mul = lr_mul
         self.use_sn = use_sn
         self.singular_vector_initializer = singular_vector_initializer
         self.power_iter = power_iter
@@ -142,6 +150,12 @@ class SNDense(Dense):
         return self._trainable_var
 
     def build(self, input_shape):
+        if self.use_wscale:
+            fan_in = int(input_shape[-1])
+            self.coeff = np.sqrt(2 / fan_in)
+        else:
+            self.coeff = 1.0
+
         if self.use_sn:
             dtype = dtypes.as_dtype(self.dtype or K.floatx())
             if not (dtype.is_floating or dtype.is_complex):
@@ -179,23 +193,32 @@ class SNDense(Dense):
                 return state_ops.assign(variable, value, name=scope)
 
     def call(self, inputs, training=None):
+        if self.lr_mul == 1.0:
+            kernel = self.coeff * self.kernel
+        else:
+            @custom_gradient
+            def lr_multiplier(x):
+                def grad(dy):
+                    return dy * self.lr_mul
+                return x, grad
+            kernel = lr_multiplier(self.coeff * self.kernel)
 
         if self.use_sn:
             training = self._get_training_value(training)
 
             # Update singular vector by power iteration
-            W = self.kernel
+            W = kernel
             W_T = array_ops.transpose(W)
             u = self.u
             for i in range(self.power_iter):
                 v = nn_impl.l2_normalize(math_ops.matmul(u, W))  # 1 x filters
                 u = nn_impl.l2_normalize(math_ops.matmul(v, W_T))
             # Backprop doesn't need in power iteration
-            u_bar = gen_array_ops.stop_gradient(u)
-            v_bar = gen_array_ops.stop_gradient(v)
+            u_bar = array_ops.stop_gradient(u)
+            v_bar = array_ops.stop_gradient(v)
             # Spectral Normalization
             sigma_W = math_ops.matmul(math_ops.matmul(u_bar, W), array_ops.transpose(v_bar))
-            W_bar = self.kernel / array_ops.squeeze(sigma_W)
+            W_bar = kernel / array_ops.squeeze(sigma_W)
 
             # Assign new singular vector
             training_value = tf_utils.constant_value(training)
@@ -221,7 +244,7 @@ class SNDense(Dense):
                         return tf_utils.smart_cond(training, true_branch, false_branch)
                 self.add_update(u_update, inputs=True)
         else:
-            W_bar = self.kernel
+            W_bar = kernel
 
         # normal Dense using W_bar
         inputs = ops.convert_to_tensor(inputs)
@@ -236,7 +259,7 @@ class SNDense(Dense):
                 outputs.set_shape(output_shape)
         else:
             inputs = math_ops.cast(inputs, self._compute_dtype)
-            outputs = gen_math_ops.mat_mul(inputs, W_bar)
+            outputs = math_ops.mat_mul(inputs, W_bar)
         if self.use_bias:
             outputs = nn.bias_add(outputs, self.bias)
         if self.activation is not None:
